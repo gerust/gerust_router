@@ -38,6 +38,50 @@ struct Recognizer<'a> {
     seperator: &'static str,
 }
 
+trait Pattern {
+    fn match_recognizer(&self, recognizer: &mut Recognizer) -> bool;
+}
+
+impl<'a> Pattern for &'a str {
+    fn match_recognizer(&self, recognizer: &mut Recognizer) -> bool {
+        if recognizer.unmatched_path.starts_with(recognizer.seperator) {
+            recognizer.unmatched_path = &recognizer.unmatched_path[1..];
+        }
+
+        if recognizer.unmatched_path.starts_with(self) {
+            let (_, rest) = recognizer.unmatched_path.split_at(self.len());
+            recognizer.unmatched_path = rest;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl<'a, > Pattern for (&'a str, Method) {
+    fn match_recognizer(&self, recognizer: &mut Recognizer) -> bool {
+        println!("{:?}", self);
+        println!("{:?}", recognizer.request.method);
+
+        if self.1 != recognizer.request.method {
+            return false;
+        }
+        println!("there");
+
+        if recognizer.unmatched_path.starts_with(recognizer.seperator) {
+            recognizer.unmatched_path = &recognizer.unmatched_path[1..];
+        }
+
+        if recognizer.unmatched_path.starts_with(self.0) {
+            let (_, rest) = recognizer.unmatched_path.split_at(self.0.len());
+            recognizer.unmatched_path = rest;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 impl<'a> Recognizer<'a> {
     fn root<F: Fn() -> Recognition>(&self, f: F) -> Result<(), Recognition> {
         if self.unmatched_path == "/" && self.request.method == Method::Get {
@@ -47,14 +91,8 @@ impl<'a> Recognizer<'a> {
         }
     }
 
-    fn on<F: Fn(&mut Recognizer) -> Result<(), Recognition>>(&mut self, path: &'static str, recognizer_fun: F) -> Result<(), Recognition> {
-        if self.unmatched_path.starts_with(self.seperator) {
-            self.unmatched_path = &self.unmatched_path[1..];
-        }
-
-        if self.unmatched_path.starts_with(path) {
-            let (_, rest) = self.unmatched_path.split_at(path.len());
-            self.unmatched_path = rest;
+    fn on<P: Pattern, F: Fn(&mut Recognizer) -> Result<(), Recognition>>(&mut self, pattern: P, recognizer_fun: F) -> Result<(), Recognition> {
+        if pattern.match_recognizer(self) {
             recognizer_fun(self)
         } else {
             Ok(())
@@ -225,6 +263,38 @@ fn test_verbs() {
     };
     assert!(tree.recognize(&req).is_err());
 }
+
+#[test]
+fn test_path_verb_pairs() {
+    let tree = RoutingTree::route(|r| {
+        r.root(|| {
+            Recognition::Root
+        })?;
+
+        r.on(("foo", Method::Get), |r| {
+            r.get(|r| {
+                Err(Recognition::Foo)
+            })?;
+
+            Ok(())
+        })?;
+
+        Ok(())
+    });
+
+    let req = MockRequest {
+        method: Method::Get,
+        url: Url::parse("http://localhost:9200/foo").unwrap(),
+    };
+    assert!(tree.recognize(&req).is_ok());
+
+    let req = MockRequest {
+        method: Method::Post,
+        url: Url::parse("http://localhost:9200/foo").unwrap(),
+    };
+    assert!(tree.recognize(&req).is_err());
+}
+
 
 #[test]
 fn test_conditions() {
