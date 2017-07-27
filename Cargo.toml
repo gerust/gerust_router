@@ -1,0 +1,8 @@
+[package]
+authors = ["Florian Gilcher <florian.gilcher@asquera.de>"]
+name = "gerust_router"
+version = "0.1.0"
+
+[dependencies]
+futures = "0.1"
+url = "1.5"
