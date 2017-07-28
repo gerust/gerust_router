@@ -295,6 +295,32 @@ fn test_path_verb_pairs() {
     assert!(tree.recognize(&req).is_err());
 }
 
+#[test]
+fn test_subroot() {
+    let tree = RoutingTree::route(|r| {
+        r.root(|| {
+            Recognition::Root
+        })?;
+
+        r.on("foo", |r| {
+            r.root(|| {
+                Recognition::Foo
+            })?;
+
+            Ok(())
+        })?;
+
+        Ok(())
+    });
+
+    let req = MockRequest {
+        method: Method::Get,
+        url: Url::parse("http://localhost:9200/foo/").unwrap(),
+    };
+    let res = tree.recognize(&req);
+    assert_eq!(res, Ok(Recognition::Foo));
+}
+
 
 #[test]
 fn test_conditions() {
