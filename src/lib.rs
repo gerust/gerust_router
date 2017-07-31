@@ -17,7 +17,8 @@ enum Recognition {
     Root,
     Foo,
     Bar,
-    AccessDenied
+    AccessDenied,
+    Subtree
 }
 
 #[derive(Debug)]
@@ -60,13 +61,9 @@ impl<'a> Pattern for &'a str {
 
 impl<'a, > Pattern for (&'a str, Method) {
     fn match_recognizer(&self, recognizer: &mut Recognizer) -> bool {
-        println!("{:?}", self);
-        println!("{:?}", recognizer.request.method);
-
         if self.1 != recognizer.request.method {
             return false;
         }
-        println!("there");
 
         if recognizer.unmatched_path.starts_with(recognizer.seperator) {
             recognizer.unmatched_path = &recognizer.unmatched_path[1..];
@@ -99,41 +96,41 @@ impl<'a> Recognizer<'a> {
         }
     }
 
-    fn get<F: Fn(&mut Recognizer) -> Result<(), Recognition>>(&mut self, recognizer_fun: F) -> Result<(), Recognition> {
+    fn get<F: Fn(&mut Recognizer) -> Recognition>(&mut self, recognizer_fun: F) -> Result<(), Recognition> {
         if self.request.method == Method::Get {
-            recognizer_fun(self)
+            Err(recognizer_fun(self))
         } else {
             Ok(())
         }
     }
 
-    fn post<F: Fn(&mut Recognizer) -> Result<(), Recognition>>(&mut self, recognizer_fun: F) -> Result<(), Recognition> {
+    fn post<F: Fn(&mut Recognizer) -> Recognition>(&mut self, recognizer_fun: F) -> Result<(), Recognition> {
         if self.request.method == Method::Post {
-            recognizer_fun(self)
+            Err(recognizer_fun(self))
         } else {
             Ok(())
         }
     }
 
-    fn put<F: Fn(&mut Recognizer) -> Result<(), Recognition>>(&mut self, recognizer_fun: F) -> Result<(), Recognition> {
+    fn put<F: Fn(&mut Recognizer) -> Recognition>(&mut self, recognizer_fun: F) -> Result<(), Recognition> {
         if self.request.method == Method::Post {
-            recognizer_fun(self)
+            Err(recognizer_fun(self))
         } else {
             Ok(())
         }
     }
 
-    fn delete<F: Fn(&mut Recognizer) -> Result<(), Recognition>>(&mut self, recognizer_fun: F) -> Result<(), Recognition> {
+    fn delete<F: Fn(&mut Recognizer) -> Recognition>(&mut self, recognizer_fun: F) -> Result<(), Recognition> {
         if self.request.method == Method::Delete {
-            recognizer_fun(self)
+            Err(recognizer_fun(self))
         } else {
             Ok(())
         }
     }
 
-    fn patch<F: Fn(&mut Recognizer) -> Result<(), Recognition>>(&mut self, recognizer_fun: F) -> Result<(), Recognition> {
+    fn patch<F: Fn(&mut Recognizer) -> Recognition>(&mut self, recognizer_fun: F) -> Result<(), Recognition> {
         if self.request.method == Method::Patch {
-            recognizer_fun(self)
+            Err(recognizer_fun(self))
         } else {
             Ok(())
         }
@@ -144,6 +141,13 @@ impl<'a> Recognizer<'a> {
             Ok(())
         } else {
             Err(Recognition::AccessDenied)
+        }
+    }
+
+    fn mount<F: Fn(&mut Recognizer) -> Result<(), Recognition>>(&mut self, subtree: &RoutingTree<F>) -> Result<(), Recognition> {
+        match subtree.traverse_with(self) {
+            Ok(recognition) => Err(recognition),
+            Err(()) => Ok(())
         }
     }
 }
@@ -160,7 +164,11 @@ impl<F: Fn(&mut Recognizer) -> Result<(),Recognition>> RoutingTree<F> {
     fn recognize(&self, request: &MockRequest) -> Result<Recognition, ()> {
         let mut rec = Recognizer { request: request, unmatched_path: request.url.path(), seperator: "/"};
 
-        match (self.fun)(&mut rec) {
+        self.traverse_with(&mut rec)
+    }
+
+    fn traverse_with(&self, rec: &mut Recognizer) -> Result<Recognition, ()> {
+        match (self.fun)(rec) {
             Ok(()) => Err(()),
             Err(recognition) => Ok(recognition)
         }
@@ -242,7 +250,7 @@ fn test_verbs() {
 
         r.on("foo", |r| {
             r.get(|r| {
-                Err(Recognition::Foo)
+                Recognition::Foo
             })?;
 
             Ok(())
@@ -273,7 +281,7 @@ fn test_path_verb_pairs() {
 
         r.on(("foo", Method::Get), |r| {
             r.get(|r| {
-                Err(Recognition::Foo)
+                Recognition::Foo
             })?;
 
             Ok(())
@@ -335,7 +343,7 @@ fn test_conditions() {
             })?;
 
             r.get(|r| {
-                Err(Recognition::Foo)
+                Recognition::Foo
             })?;
 
             Ok(())
@@ -350,4 +358,33 @@ fn test_conditions() {
     };
     let res = tree.recognize(&req);
     assert_eq!(res, Ok(Recognition::AccessDenied));
+}
+
+#[test]
+fn tree_in_tree() {
+    let sub_tree = RoutingTree::route(|r| {
+        r.root(|| {
+            Recognition::Subtree
+        })
+    });
+    let tree = RoutingTree::route(|r| {
+        r.root(|| {
+            Recognition::Root
+        })?;
+
+        r.on("foo", |r| {
+            r.mount(&sub_tree)?;
+
+            Ok(())
+        })?;
+
+        Ok(())
+    });
+
+    let req = MockRequest {
+        method: Method::Get,
+        url: Url::parse("http://localhost:9200/foo/").unwrap(),
+    };
+    let res = tree.recognize(&req);
+    assert_eq!(res, Ok(Recognition::Subtree));
 }
