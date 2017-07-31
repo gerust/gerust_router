@@ -18,7 +18,9 @@ enum Recognition {
     Foo,
     Bar,
     AccessDenied,
-    Subtree
+    Subtree,
+    NotFound,
+    WithId(u64)
 }
 
 #[derive(Debug)]
@@ -59,7 +61,7 @@ impl<'a> Pattern for &'a str {
     }
 }
 
-impl<'a, > Pattern for (&'a str, Method) {
+impl<'a> Pattern for (&'a str, Method) {
     fn match_recognizer(&self, recognizer: &mut Recognizer) -> bool {
         if self.1 != recognizer.request.method {
             return false;
@@ -149,6 +151,25 @@ impl<'a> Recognizer<'a> {
             Ok(recognition) => Err(recognition),
             Err(()) => Ok(())
         }
+    }
+
+    fn param<F: std::str::FromStr>(&mut self) -> Result<F, Recognition> {
+        if self.unmatched_path.starts_with(self.seperator) {
+            self.unmatched_path = &self.unmatched_path[1..];
+        }
+
+        let maybe_loc = self.unmatched_path.find("/");
+
+        let loc = match maybe_loc {
+            Some(l) => l,
+            None => return Err(Recognition::NotFound)
+        };
+
+        let (param, rest) = self.unmatched_path.split_at(loc);
+
+        self.unmatched_path = rest;
+
+        param.parse().map_err(|e| Recognition::NotFound )
     }
 }
 
@@ -387,4 +408,33 @@ fn tree_in_tree() {
     };
     let res = tree.recognize(&req);
     assert_eq!(res, Ok(Recognition::Subtree));
+}
+
+
+#[test]
+fn test_params() {
+    let tree = RoutingTree::route(|r| {
+        r.root(|| {
+            Recognition::Root
+        })?;
+
+        r.on("foo", |r| {
+            let id = r.param()?;
+
+            r.get(|r| {
+                Recognition::WithId(id)
+            })?;
+
+            Ok(())
+        })?;
+
+        Ok(())
+    });
+
+    let req = MockRequest {
+        method: Method::Get,
+        url: Url::parse("http://localhost:9200/foo/1/").unwrap(),
+    };
+    let res = tree.recognize(&req);
+    assert_eq!(res, Ok(Recognition::WithId(1)));
 }
