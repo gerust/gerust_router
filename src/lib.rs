@@ -2,13 +2,11 @@ extern crate url;
 extern crate http;
 
 use http::{method, Method};
-use url::Url;
 
 pub trait RouteResult {
     fn access_denied() -> Self;
     fn not_found() -> Self;
 }
-
 
 pub trait HttpRequest {
     fn method(&self) -> Method;
@@ -16,13 +14,13 @@ pub trait HttpRequest {
 }
 
 #[derive(Debug)]
-struct Recognizer<'a, R: HttpRequest + 'a> {
+pub struct Recognizer<'a, R: HttpRequest + 'a> {
     request: &'a R,
     unmatched_path: &'a str,
     seperator: &'static str,
 }
 
-trait Pattern {
+pub trait Pattern {
     fn match_recognizer<R: HttpRequest>(&self, recognizer: &mut Recognizer<R>) -> bool;
 }
 
@@ -63,7 +61,7 @@ impl<'a> Pattern for (&'a str, Method) {
     }
 }
 
-trait Recognize<R: RouteResult> {
+pub trait Recognize<R: RouteResult> {
     fn root<F: Fn() -> R>(&self, f: F) -> Result<(), R>;
     fn on<P: Pattern, F: Fn(&mut Self) -> Result<(), R>>(&mut self, pattern: P, recognizer_fun: F) -> Result<(), R>;
 
@@ -177,7 +175,7 @@ impl<'a, Req: HttpRequest, Rec: RouteResult> Recognize<Rec> for Recognizer<'a, R
     }
 }
 
-struct Param<T> {
+pub struct Param<T> {
     val: T,
     name: &'static str
 }
