@@ -188,33 +188,30 @@ impl<T> std::ops::Deref for Param<T> {
     }
 }
 
-struct RoutingTree<F> {
+pub struct RoutingTree<F> {
     fun: F,
 }
 
 impl<F> RoutingTree<F> {
-    pub fn route<Req, Res>(route_fn: F) -> RoutingTree<F>
-        where F: Fn(&mut Recognizer<Req>) -> Result<(),Res>,
-              Req: HttpRequest,
-              Res: RouteResult {
-        RoutingTree { fun: route_fn }
+    pub fn route<Req, Res>(route_fn: F) -> Self where F: Fn(&mut Recognizer<Req>) -> Result<(),Res> {
+        RoutingTree { fun : route_fn }
     }
+}
 
-    pub fn recognize<Req, Res>(&self, request: &Req) -> Result<Res, ()>
-        where F: Fn(&mut Recognizer<Req>) -> Result<(),Res>,
-              Req: HttpRequest,
-              Res: RouteResult {
+pub trait RoutingTreeTrait<Req: HttpRequest, Res: RouteResult> {
+    fn recognize(&self, request: &Req) -> Result<Res, ()>;
 
+    fn traverse_with(&self, rec: &mut Recognizer<Req>) -> Result<Res, ()>;
+}
+
+impl<Req: HttpRequest, Res: RouteResult, F: Fn(&mut Recognizer<Req>) -> Result<(),Res>> RoutingTreeTrait<Req, Res> for RoutingTree<F>  {
+    fn recognize(&self, request: &Req) -> Result<Res, ()> {
         let mut rec = Recognizer { request: request, unmatched_path: request.path(), seperator: "/"};
 
         self.traverse_with(&mut rec)
     }
 
-    pub fn traverse_with<Req, Res>(&self, rec: &mut Recognizer<Req>) -> Result<Res, ()>
-        where F: Fn(&mut Recognizer<Req>) -> Result<(),Res>,
-              Req: HttpRequest,
-              Res: RouteResult {
-
+    fn traverse_with(&self, rec: &mut Recognizer<Req>) -> Result<Res, ()> where F: Fn(&mut Recognizer<Req>) -> Result<(),Res> {
         match (self.fun)(rec) {
             Ok(()) => Err(()),
             Err(recognition) => Ok(recognition)
@@ -230,6 +227,7 @@ mod test {
     use super::HttpRequest;
     use super::Recognize;
     use super::RouteResult;
+    use super::RoutingTreeTrait;
 
     #[derive(Debug)]
     struct MockRequest {
