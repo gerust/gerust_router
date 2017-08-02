@@ -75,11 +75,15 @@ pub trait Recognize<R: RouteResult> {
 
     fn patch<F: Fn(&mut Self) -> R>(&mut self, recognizer_fun: F) -> Result<(), R>;
 
-    fn condition<F: Fn(&Self) -> bool>(&mut self, predicate: F) -> Result<(), R>;
-
-//    fn mount<'b: 'a, F: Fn(&mut Recognizer<R>) -> Result<(), Recognition>>(&'a mut self, subtree: &'b RoutingTree<F>) -> Result<(), Recognition> {
-
     fn param<F: std::str::FromStr>(&mut self, name: &'static str) -> Result<Param<F>, R>;
+}
+
+pub trait Mount<Req: HttpRequest, Rec: RouteResult> {
+    fn mount<T: RoutingTreeTrait<Req, Rec>>(&mut self, subtree: &T) -> Result<(), Rec>;
+}
+
+pub trait Condition<Req: HttpRequest, Rec: RouteResult> {
+    fn condition<F: Fn(&Self) -> bool>(&mut self, predicate: F) -> Result<(), Rec>;
 }
 
 impl<'a, Req: HttpRequest, Rec: RouteResult> Recognize<Rec> for Recognizer<'a, Req> {
@@ -139,22 +143,6 @@ impl<'a, Req: HttpRequest, Rec: RouteResult> Recognize<Rec> for Recognizer<'a, R
         }
     }
 
-    fn condition<F: Fn(&Self) -> bool>(&mut self, predicate: F) -> Result<(), Rec> {
-        if predicate(self) {
-            Ok(())
-        } else {
-            Err(RouteResult::access_denied())
-        }
-    }
-
-
-//    fn mount<'b: 'a, F: Fn(&mut Recognizer<R>) -> Result<(), Recognition>>(&'a mut self, subtree: &'b RoutingTree<F>) -> Result<(), Recognition> {
-//        match subtree.traverse_with(self) {
-//            Ok(recognition) => Err(recognition),
-//            Err(()) => Ok(())
-//        }
-//    }
-
     fn param<F: std::str::FromStr>(&mut self, name: &'static str) -> Result<Param<F>, Rec> {
         if self.unmatched_path.starts_with(self.seperator) {
             self.unmatched_path = &self.unmatched_path[1..];
@@ -172,6 +160,25 @@ impl<'a, Req: HttpRequest, Rec: RouteResult> Recognize<Rec> for Recognizer<'a, R
         self.unmatched_path = rest;
 
         param.parse().map(|p| Param { val: p, name: name }).map_err(|e| RouteResult::not_found() )
+    }
+}
+
+impl<'a, Req: HttpRequest, Rec: RouteResult> Mount<Req, Rec> for Recognizer<'a, Req> {
+    fn mount<Tree: RoutingTreeTrait<Req, Rec>>(&mut self, subtree: &Tree) -> Result<(), Rec> {
+        match subtree.traverse_with(self) {
+            Ok(recognition) => Err(recognition),
+            Err(()) => Ok(())
+        }
+    }
+}
+
+impl<'a, Req: HttpRequest, Rec: RouteResult> Condition<Req, Rec> for Recognizer<'a, Req> {
+    fn condition<F: Fn(&Self) -> bool>(&mut self, predicate: F) -> Result<(), Rec> {
+        if predicate(self) {
+            Ok(())
+        } else {
+            Err(RouteResult::access_denied())
+        }
     }
 }
 
@@ -228,6 +235,7 @@ mod test {
     use super::Recognize;
     use super::RouteResult;
     use super::RoutingTreeTrait;
+    use super::Mount;
 
     #[derive(Debug)]
     struct MockRequest {
@@ -435,32 +443,32 @@ mod test {
 //        assert_eq!(res, Ok(Recognition::AccessDenied));
 //    }
 
-    //#[test]
-    //fn tree_in_tree() {
-    //    let sub_tree = RoutingTree::route(|r| {
-    //        r.root(|| {
-    //            Recognition::Subtree
-    //        })
-    //    });
-    //    let tree = RoutingTree::route(|r| {
-    //        r.root(|| {
-    //            Recognition::Root
-    //        })?;
-    //
-    //        r.on("foo", |r| {
-    //            r.mount(&sub_tree)
-    //        })?;
-    //
-    //        Ok(())
-    //    });
-    //
-    //    let req = MockRequest {
-    //        method: method::GET,
-    //        url: Url::parse("http://localhost:9200/foo/").unwrap(),
-    //    };
-    //    let res = tree.recognize(&req);
-    //    assert_eq!(res, Ok(Recognition::Subtree));
-    //}
+    #[test]
+    fn tree_in_tree() {
+        let sub_tree = RoutingTree::route(|r| {
+            r.root(|| {
+                Recognition::Subtree
+            })
+        });
+        let tree = RoutingTree::route(|r| {
+            r.root(|| {
+                Recognition::Root
+            })?;
+
+            r.on("foo", |r| {
+                r.mount(&sub_tree)
+            })?;
+
+            Ok(())
+        });
+
+        let req = MockRequest {
+            method: method::GET,
+            url: Url::parse("http://localhost:9200/foo/").unwrap(),
+        };
+        let res = tree.recognize(&req);
+        assert_eq!(res, Ok(Recognition::Subtree));
+    }
 
 
     #[test]
