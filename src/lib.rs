@@ -2,6 +2,7 @@ extern crate url;
 extern crate http;
 
 use http::{method, Method};
+use std::str::FromStr;
 
 pub trait RouteResult {
     fn access_denied() -> Self;
@@ -61,6 +62,72 @@ impl<'a> Pattern for (&'a str, Method) {
     }
 }
 
+pub trait ParseToParam where Self: Sized {
+    type Output;
+    type Err;
+
+    fn parse(input: &str) -> Result<(Self::Output, &str), Self::Err>;
+}
+
+
+impl<T> ParseToParam for T where T: FromStr {
+    type Output = T;
+    type Err = <T as FromStr>::Err;
+
+    fn parse(input: &str) -> Result<(Self::Output, &str), Self::Err> {
+        let maybe_loc = input.find("/");
+
+        match maybe_loc {
+            Some(l) => {
+                let (param, rest) = input.split_at(l);
+
+                param.parse().map(|p| (p, rest))
+            },
+            None => {
+                input.parse().map(|p| (p, ""))
+            }
+        }
+    }
+}
+
+pub struct Slug<T: ParseToParam + 'static> {
+    phantom: std::marker::PhantomData<&'static T>
+}
+
+impl<T> ParseToParam for Slug<T> where T: ParseToParam {
+    type Output = <T as ParseToParam>::Output;
+    type Err = <T as ParseToParam>::Err;
+
+    fn parse(input: &str) -> Result<(Self::Output, &str), Self::Err> {
+        let maybe_loc = input.find("/");
+
+        match maybe_loc {
+            Some(l) => {
+                let (slug, rest) = input.split_at(l);
+
+                let maybe_loc = slug.find("-");
+
+                if let Some(l) = maybe_loc {
+                    let (param, _) = slug.split_at(l);
+                    T::parse(param)
+                } else {
+                    T::parse(slug)
+                }
+            },
+            None => {
+                let maybe_loc = input.find("-");
+
+                if let Some(l) = maybe_loc {
+                    let (param, _) = input.split_at(l);
+                    T::parse(param)
+                } else {
+                    T::parse(input)
+                }
+            }
+        }
+    }
+}
+
 pub trait Recognize<R: RouteResult> {
     fn root<F: Fn() -> R>(&self, f: F) -> Result<(), R>;
     fn on<P: Pattern, F: Fn(&mut Self) -> Result<(), R>>(&mut self, pattern: P, recognizer_fun: F) -> Result<(), R>;
@@ -75,7 +142,7 @@ pub trait Recognize<R: RouteResult> {
 
     fn patch<F: Fn(&mut Self) -> R>(&mut self, recognizer_fun: F) -> Result<(), R>;
 
-    fn param<F: std::str::FromStr>(&mut self, name: &'static str) -> Result<Param<F>, R>;
+    fn param<P: ParseToParam>(&mut self, name: &'static str) -> Result<Param<P::Output>, R>;
 }
 
 pub trait Mount<Req: HttpRequest, Rec: RouteResult> {
@@ -143,23 +210,19 @@ impl<'a, Req: HttpRequest, Rec: RouteResult> Recognize<Rec> for Recognizer<'a, R
         }
     }
 
-    fn param<F: std::str::FromStr>(&mut self, name: &'static str) -> Result<Param<F>, Rec> {
+    fn param<P: ParseToParam>(&mut self, name: &'static str) -> Result<Param<P::Output>, Rec> {
         if self.unmatched_path.starts_with(self.seperator) {
             self.unmatched_path = &self.unmatched_path[1..];
         }
 
-        let maybe_loc = self.unmatched_path.find("/");
+        match P::parse(self.unmatched_path) {
+            Ok((param, rest)) => {
+                self.unmatched_path = rest;
 
-        let loc = match maybe_loc {
-            Some(l) => l,
-            None => return Err(RouteResult::not_found())
-        };
-
-        let (param, rest) = self.unmatched_path.split_at(loc);
-
-        self.unmatched_path = rest;
-
-        param.parse().map(|p| Param { val: p, name: name }).map_err(|e| RouteResult::not_found() )
+                Ok(Param { val: param, name: name })
+            },
+            Err(_) => { Err(Rec::not_found()) }
+        }
     }
 }
 
@@ -236,6 +299,7 @@ mod test {
     use super::RouteResult;
     use super::RoutingTreeTrait;
     use super::Mount;
+    use super::Slug;
 
     #[derive(Debug)]
     struct MockRequest {
@@ -479,7 +543,7 @@ mod test {
             })?;
 
             r.on("foo", |r| {
-                let id = r.param("id")?;
+                let id = r.param::<u64>("id")?;
 
                 r.get(|r| {
                     Recognition::WithId(*id)
@@ -493,5 +557,31 @@ mod test {
         };
         let res = tree.recognize(&req);
         assert_eq!(res, Ok(Recognition::WithId(1)));
+    }
+
+    #[test]
+    fn test_slug_parsing() {
+        let tree = RoutingTree::route(|r| {
+            r.root(|| {
+                Recognition::Root
+            })?;
+
+            r.on("foo", |r| {
+                let id = r.param::<Slug<u64>>("id")?;
+
+                r.get(|r| {
+                    Recognition::WithId(*id)
+                })
+            })
+        });
+
+        for path in ["foo/1-foo-bar", "foo/1"].iter() {
+            let req = MockRequest {
+                method: method::GET,
+                url: Url::parse(&format!("http://localhost:9200/{}", path)).unwrap(),
+            };
+            let res = tree.recognize(&req);
+            assert_eq!(res, Ok(Recognition::WithId(1)));
+        }
     }
 }
