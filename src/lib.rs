@@ -250,6 +250,16 @@ pub struct Param<T> {
     name: &'static str
 }
 
+impl<T> Param<T> {
+    fn val(&self) -> &T {
+        &self.val
+    }
+
+    fn name(&self) -> &'static str {
+        &self.name
+    }
+}
+
 impl<T> std::ops::Deref for Param<T> {
     type Target = T;
 
