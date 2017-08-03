@@ -21,6 +21,12 @@ pub struct Recognizer<'a, R: HttpRequest + 'a> {
     seperator: &'static str,
 }
 
+impl<'a, R: HttpRequest + 'a> Recognizer<'a, R> {
+    pub fn request(&self) -> &R {
+        &self.request
+    }
+}
+
 pub trait Pattern {
     fn match_recognizer<R: HttpRequest>(&self, recognizer: &mut Recognizer<R>) -> bool;
 }
@@ -150,7 +156,7 @@ pub trait Mount<Req: HttpRequest, Rec: RouteResult> {
 }
 
 pub trait Condition<Req: HttpRequest, Rec: RouteResult> {
-    fn condition<F: Fn(&Self) -> bool>(&mut self, predicate: F) -> Result<(), Rec>;
+    fn condition<F: Fn(&Self) -> Result<(), Rec>>(&mut self, predicate: F) -> Result<(), Rec>;
 }
 
 impl<'a, Req: HttpRequest, Rec: RouteResult> Recognize<Rec> for Recognizer<'a, Req> {
@@ -236,12 +242,8 @@ impl<'a, Req: HttpRequest, Rec: RouteResult> Mount<Req, Rec> for Recognizer<'a, 
 }
 
 impl<'a, Req: HttpRequest, Rec: RouteResult> Condition<Req, Rec> for Recognizer<'a, Req> {
-    fn condition<F: Fn(&Self) -> bool>(&mut self, predicate: F) -> Result<(), Rec> {
-        if predicate(self) {
-            Ok(())
-        } else {
-            Err(RouteResult::access_denied())
-        }
+    fn condition<F: Fn(&Self) -> Result<(), Rec>>(&mut self, predicate: F) -> Result<(), Rec> {
+        predicate(self)
     }
 }
 
@@ -251,11 +253,11 @@ pub struct Param<T> {
 }
 
 impl<T> Param<T> {
-    fn val(&self) -> &T {
+    pub fn val(&self) -> &T {
         &self.val
     }
 
-    fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         &self.name
     }
 }
@@ -310,6 +312,7 @@ mod test {
     use super::RoutingTreeTrait;
     use super::Mount;
     use super::Slug;
+    use super::Condition;
 
     #[derive(Debug)]
     struct MockRequest {
@@ -327,7 +330,6 @@ mod test {
         NotFound,
         WithId(u64)
     }
-
 
     impl RouteResult for Recognition {
         fn access_denied() -> Self {
@@ -487,35 +489,35 @@ mod test {
     }
 
 
-//    #[test]
-//    fn test_conditions() {
-//        let tree = RoutingTree::route(|r| {
-//            r.root(|| {
-//                Recognition::Root
-//            })?;
-//
-//            r.on("foo", |r| {
-//                r.condition(|r| {
-//                    &r.request().method() == method::POST
-//                })?;
-//
-//                r.get(|r| {
-//                    Recognition::Foo
-//                })?;
-//
-//                Ok(())
-//            })?;
-//
-//            Ok(())
-//        });
-//
-//        let req = MockRequest {
-//            method: method::GET,
-//            url: Url::parse("http://localhost:9200/foo").unwrap(),
-//        };
-//        let res = tree.recognize(&req);
-//        assert_eq!(res, Ok(Recognition::AccessDenied));
-//    }
+    #[test]
+    fn test_conditions() {
+        let tree = RoutingTree::route::<MockRequest, Recognition>(|r| {
+            r.root(|| {
+                Recognition::Root
+            })?;
+
+            r.on("foo", |r| {
+                r.condition(|r| {
+                    if r.request().method() == method::POST {
+                        Ok(())
+                    } else {
+                        Err(Recognition::AccessDenied)
+                    }
+                })?;
+
+                r.get(|r| {
+                    Recognition::Foo
+                })
+            })
+        });
+
+        let req = MockRequest {
+            method: method::GET,
+            url: Url::parse("http://localhost:9200/foo").unwrap(),
+        };
+        let res = tree.recognize(&req);
+        assert_eq!(res, Ok(Recognition::AccessDenied));
+    }
 
     #[test]
     fn tree_in_tree() {
